@@ -1,3 +1,5 @@
+require("dotenv").config()
+
 const express = require("express")
 const cors = require("cors")
 const nutritionRoutes = require("./routes/nutritionRoutes")
@@ -23,6 +25,7 @@ app.get("/health", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Nutrition Service running on port ${PORT}`)
+  console.log(`Health check available at http://localhost:${PORT}/health`)
 })
 
 module.exports = app

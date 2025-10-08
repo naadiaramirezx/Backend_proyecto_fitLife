@@ -1,7 +1,7 @@
+require("dotenv").config()
+
 const express = require("express")
 const cors = require("cors")
-const bcrypt = require("bcryptjs")
-const jwt = require("jsonwebtoken")
 const userRoutes = require("./routes/userRoutes")
 
 const app = express()
@@ -20,6 +20,23 @@ app.get("/health", (req, res) => {
     service: "users-service",
     status: "healthy",
     timestamp: new Date().toISOString(),
+  })
+})
+
+// Manejo de errores global
+app.use((err, req, res, next) => {
+  console.error("Error no manejado:", err)
+  res.status(500).json({
+    success: false,
+    message: "Error interno del servidor",
+  })
+})
+
+// Manejo de rutas no encontradas
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "Ruta no encontrada",
   })
 })
 

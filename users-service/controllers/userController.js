@@ -1,50 +1,46 @@
 const User = require("../models/User")
-const jwt = require("jsonwebtoken")
-const crypto = require("crypto")
+const { supabaseAdmin } = require("../../config/supabaseClient")
 
 class UserController {
-  // RF01: Crear cuenta de usuario con validación de correo
   async register(req, res) {
     try {
-      const {
-        email,
-        password,
-        first_name,
-        last_name,
-        date_of_birth,
-        gender,
-        height,
-        weight,
-        activity_level,
-        fitness_goals,
-        health_conditions,
-      } = req.body
+      const { email, password, nombre, ap_paterno, ap_materno, telefono, peso, altura } = req.body
 
-      if (!email || !password || !first_name || !last_name) {
+      // Validación de campos requeridos
+      if (!email || !password || !nombre || !ap_paterno) {
         return res.status(400).json({
           success: false,
-          message: "Email, contraseña, nombre y apellido son requeridos",
+          message: "Email, contraseña, nombre y apellido paterno son requeridos",
+        })
+      }
+
+      // Validar longitud de contraseña
+      if (password.length < 8) {
+        return res.status(400).json({
+          success: false,
+          message: "La contraseña debe tener al menos 8 caracteres",
         })
       }
 
       // Validar datos de salud si se proporcionan
-      if (height && (height < 100 || height > 250)) {
+      if (altura && (altura < 100 || altura > 250)) {
         return res.status(400).json({
           success: false,
           message: "La estatura debe estar entre 100 y 250 cm",
         })
       }
 
-      if (weight && (weight < 30 || weight > 300)) {
+      if (peso && (peso < 30 || peso > 300)) {
         return res.status(400).json({
           success: false,
           message: "El peso debe estar entre 30 y 300 kg",
         })
       }
 
-      // Verificar si el usuario ya existe
-      const existingUser = await User.findByEmail(email)
-      if (existingUser) {
+      const { data: existingUserAuth } = await supabaseAdmin.auth.admin.listUsers()
+      const userExists = existingUserAuth.users.find((u) => u.email === email)
+
+      if (userExists) {
         return res.status(409).json({
           success: false,
           message: "El usuario ya existe con este correo electrónico",
@@ -52,43 +48,42 @@ class UserController {
       }
 
       const userData = {
-        email,
-        password,
-        first_name,
-        last_name,
-        date_of_birth,
-        gender,
-        height,
-        weight,
-        activity_level: activity_level || "sedentary",
-        fitness_goals: fitness_goals || [],
-        health_conditions: health_conditions || [],
+        correo: email,
+        password: password,
+        nombre: nombre,
+        ap_paterno: ap_paterno,
+        ap_materno: ap_materno || "",
+        telefono: telefono || "",
+        peso: peso,
+        altura: altura,
       }
 
       const user = await User.create(userData)
 
-      // Generar token JWT
-      const token = user.generateAuthToken()
-
       res.status(201).json({
         success: true,
-        message:
-          "Usuario registrado exitosamente. ¡Ahora puedes recibir recomendaciones personalizadas basadas en tu perfil de salud!",
+        message: "Usuario registrado exitosamente",
         data: {
-          user: user.toPublicJSON(),
-          token,
+          user: user?.toPublicJSON(),
         },
       })
     } catch (error) {
       console.error("Error en registro:", error)
+
+      if (error.message?.includes("User already registered")) {
+        return res.status(409).json({
+          success: false,
+          message: "El correo electrónico ya está registrado",
+        })
+      }
+
       res.status(500).json({
         success: false,
-        message: "Error interno del servidor",
+        message: error.message || "Error interno del servidor",
       })
     }
   }
 
-  // RF02: Inicio de sesión con autenticación segura
   async login(req, res) {
     try {
       const { email, password } = req.body
@@ -100,33 +95,44 @@ class UserController {
         })
       }
 
-      // Buscar usuario
-      const user = await User.findByEmail(email)
+      const { data: authData, error: authError } = await supabaseAdmin.auth.signInWithPassword({
+        email: email,
+        password: password,
+      })
+
+      if (authError) {
+        return res.status(401).json({
+          success: false,
+          message: "Credenciales inválidas",
+        })
+      }
+
+      if (!authData.user) {
+        return res.status(401).json({
+          success: false,
+          message: "Credenciales inválidas",
+        })
+      }
+
+      const user = await User.findByUserId(authData.user.id)
+
       if (!user) {
-        return res.status(401).json({
+        return res.status(404).json({
           success: false,
-          message: "Credenciales inválidas",
+          message: "Usuario no encontrado en el sistema",
         })
       }
-
-      // Verificar contraseña
-      const isPasswordValid = await user.comparePassword(password)
-      if (!isPasswordValid) {
-        return res.status(401).json({
-          success: false,
-          message: "Credenciales inválidas",
-        })
-      }
-
-      // Generar token
-      const token = user.generateAuthToken()
 
       res.status(200).json({
         success: true,
         message: "Inicio de sesión exitoso",
         data: {
           user: user.toPublicJSON(),
-          token,
+          session: {
+            access_token: authData.session?.access_token,
+            refresh_token: authData.session?.refresh_token,
+            expires_at: authData.session?.expires_at,
+          },
         },
       })
     } catch (error) {
@@ -138,26 +144,12 @@ class UserController {
     }
   }
 
-  // RF03: Editar perfil del usuario
   async updateProfile(req, res) {
     try {
-      const userId = req.user.userId
+      const perfilId = req.user.perfilId
       const updates = req.body
 
-      const allowedUpdates = [
-        "first_name",
-        "last_name",
-        "date_of_birth",
-        "gender",
-        "height",
-        "weight",
-        "activity_level",
-        "fitness_goals",
-        "health_conditions",
-        "dietary_restrictions",
-      ]
-
-      const user = await User.findById(userId)
+      const user = await User.findById(perfilId)
       if (!user) {
         return res.status(404).json({
           success: false,
@@ -166,29 +158,21 @@ class UserController {
       }
 
       // Validar datos de salud si se actualizan
-      if (updates.height && (updates.height < 100 || updates.height > 250)) {
+      if (updates.altura && (updates.altura < 100 || updates.altura > 250)) {
         return res.status(400).json({
           success: false,
           message: "La estatura debe estar entre 100 y 250 cm",
         })
       }
 
-      if (updates.weight && (updates.weight < 30 || updates.weight > 300)) {
+      if (updates.peso && (updates.peso < 30 || updates.peso > 300)) {
         return res.status(400).json({
           success: false,
           message: "El peso debe estar entre 30 y 300 kg",
         })
       }
 
-      // Filtrar solo campos permitidos
-      const filteredUpdates = {}
-      Object.keys(updates).forEach((key) => {
-        if (allowedUpdates.includes(key)) {
-          filteredUpdates[key] = updates[key]
-        }
-      })
-
-      const updatedUser = await user.update(filteredUpdates)
+      const updatedUser = await user.update(updates)
 
       res.status(200).json({
         success: true,
@@ -206,12 +190,11 @@ class UserController {
     }
   }
 
-  // Obtener perfil del usuario
   async getProfile(req, res) {
     try {
-      const userId = req.user.userId
+      const perfilId = req.user.perfilId
 
-      const user = await User.findById(userId)
+      const user = await User.findById(perfilId)
       if (!user) {
         return res.status(404).json({
           success: false,
@@ -232,31 +215,11 @@ class UserController {
     }
   }
 
-  // Verificar email
-  async verifyEmail(req, res) {
-    try {
-      const { token } = req.params
-
-      // Esta funcionalidad necesitaría implementarse en el modelo User
-      // Por ahora retornamos un mensaje de éxito
-      res.status(200).json({
-        success: true,
-        message: "Email verificado exitosamente",
-      })
-    } catch (error) {
-      console.error("Error verificando email:", error)
-      res.status(500).json({
-        success: false,
-        message: "Error interno del servidor",
-      })
-    }
-  }
-
   async getHealthAnalysis(req, res) {
     try {
-      const userId = req.user.userId
+      const perfilId = req.user.perfilId
 
-      const user = await User.findById(userId)
+      const user = await User.findById(perfilId)
       if (!user) {
         return res.status(404).json({
           success: false,
@@ -264,16 +227,15 @@ class UserController {
         })
       }
 
-      // Calcular IMC si hay datos disponibles
       const healthAnalysis = {
-        hasHealthData: !!(user.weight && user.height),
+        hasHealthData: !!(user.peso && user.altura),
         bmi: null,
         healthStatus: "unknown",
         recommendations: [],
       }
 
-      if (user.weight && user.height) {
-        const bmi = user.weight / Math.pow(user.height / 100, 2)
+      if (user.peso && user.altura) {
+        const bmi = user.peso / Math.pow(user.altura / 100, 2)
         healthAnalysis.bmi = Math.round(bmi * 10) / 10
 
         if (bmi < 18.5) {
@@ -303,10 +265,9 @@ class UserController {
         success: true,
         data: {
           user: {
-            name: `${user.first_name} ${user.last_name}`,
-            weight: user.weight,
-            height: user.height,
-            age: user.date_of_birth ? new Date().getFullYear() - new Date(user.date_of_birth).getFullYear() : null,
+            nombre: `${user.nombre} ${user.ap_paterno}`,
+            peso: user.peso,
+            altura: user.altura,
           },
           healthAnalysis,
         },

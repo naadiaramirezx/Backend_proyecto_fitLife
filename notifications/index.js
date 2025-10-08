@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require("express")
 const cors = require("cors")
 const cron = require("node-cron")
@@ -14,18 +16,10 @@ app.use(express.json())
 // Routes
 app.use("/api/notifications", notificationRoutes)
 
-// Inicializar programador de notificaciones
-const scheduler = new NotificationScheduler()
-
-// Programar tareas de notificaciones
-// Verificar notificaciones cada 5 minutos
+// Programar verificación de notificaciones cada 5 minutos
 cron.schedule("*/5 * * * *", () => {
-  scheduler.processScheduledNotifications()
-})
-
-// Verificar recordatorios diarios a las 8:00 AM
-cron.schedule("0 8 * * *", () => {
-  scheduler.sendDailyReminders()
+  console.log("Verificando notificaciones programadas...")
+  NotificationScheduler.processScheduledNotifications()
 })
 
 // Health check

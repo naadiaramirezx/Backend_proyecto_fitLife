@@ -1,4 +1,4 @@
-const dbConnection = require("../../config/database")
+const { supabaseAdmin } = require("../../config/supabaseClient")
 
 class Food {
   constructor(foodData) {
@@ -19,243 +19,168 @@ class Food {
     this.allergens = foodData.allergens
     this.dietary_restrictions = foodData.dietary_restrictions
     this.glycemic_index = foodData.glycemic_index
+    this.barcode = foodData.barcode
     this.is_verified = foodData.is_verified
     this.created_at = foodData.created_at
   }
 
-  // Crear nuevo alimento
   static async create(foodData) {
     try {
-      const query = `
-        INSERT INTO foods (name, category, serving_size_amount, serving_size_unit, calories, protein, carbohydrates, fat, fiber, sugar, sodium, vitamins, minerals, allergens, dietary_restrictions, glycemic_index, is_verified)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-        RETURNING *
-      `
+      const { data, error } = await supabaseAdmin
+        .from("foods")
+        .insert([
+          {
+            name: foodData.name,
+            category: foodData.category,
+            serving_size_amount: foodData.serving_size_amount,
+            serving_size_unit: foodData.serving_size_unit,
+            calories: foodData.calories,
+            protein: foodData.protein,
+            carbohydrates: foodData.carbohydrates,
+            fat: foodData.fat,
+            fiber: foodData.fiber || 0,
+            sugar: foodData.sugar || 0,
+            sodium: foodData.sodium || 0,
+            vitamins: foodData.vitamins || {},
+            minerals: foodData.minerals || {},
+            allergens: foodData.allergens || [],
+            dietary_restrictions: foodData.dietary_restrictions || [],
+            glycemic_index: foodData.glycemic_index,
+            barcode: foodData.barcode,
+            is_verified: foodData.is_verified || false,
+          },
+        ])
+        .select()
+        .single()
 
-      const values = [
-        foodData.name,
-        foodData.category,
-        foodData.serving_size_amount,
-        foodData.serving_size_unit,
-        foodData.calories,
-        foodData.protein,
-        foodData.carbohydrates,
-        foodData.fat,
-        foodData.fiber || 0,
-        foodData.sugar || 0,
-        foodData.sodium || 0,
-        JSON.stringify(foodData.vitamins || {}),
-        JSON.stringify(foodData.minerals || {}),
-        foodData.allergens || [],
-        foodData.dietary_restrictions || [],
-        foodData.glycemic_index,
-        foodData.is_verified || false,
-      ]
-
-      const result = await dbConnection.query(query, values)
-      return new Food(result.rows[0])
+      if (error) throw error
+      return new Food(data)
     } catch (error) {
       throw error
     }
   }
 
-  // Buscar alimento por ID
   static async findById(id) {
     try {
-      const query = "SELECT * FROM foods WHERE id = $1"
-      const result = await dbConnection.query(query, [id])
+      const { data, error } = await supabaseAdmin.from("foods").select("*").eq("id", id).single()
 
-      if (result.rows.length === 0) {
-        return null
+      if (error) {
+        if (error.code === "PGRST116") return null
+        throw error
       }
 
-      return new Food(result.rows[0])
+      return new Food(data)
     } catch (error) {
       throw error
     }
   }
 
-  // Buscar alimentos por nombre
   static async searchByName(searchTerm, limit = 20) {
     try {
-      const query = `
-        SELECT * FROM foods 
-        WHERE name ILIKE $1 
-        ORDER BY is_verified DESC, name 
-        LIMIT $2
-      `
-      const result = await dbConnection.query(query, [`%${searchTerm}%`, limit])
+      const { data, error } = await supabaseAdmin
+        .from("foods")
+        .select("*")
+        .ilike("name", `%${searchTerm}%`)
+        .order("is_verified", { ascending: false })
+        .order("name", { ascending: true })
+        .limit(limit)
 
-      return result.rows.map((row) => new Food(row))
+      if (error) throw error
+      return data.map((row) => new Food(row))
     } catch (error) {
       throw error
     }
   }
 
-  // Buscar alimentos por categoría
+  static async findByBarcode(barcode) {
+    try {
+      const { data, error } = await supabaseAdmin.from("foods").select("*").eq("barcode", barcode).single()
+
+      if (error) {
+        if (error.code === "PGRST116") return null
+        throw error
+      }
+
+      return new Food(data)
+    } catch (error) {
+      throw error
+    }
+  }
+
   static async findByCategory(category, limit = 50, offset = 0) {
     try {
-      const query = `
-        SELECT * FROM foods 
-        WHERE category = $1 
-        ORDER BY is_verified DESC, name 
-        LIMIT $2 OFFSET $3
-      `
-      const result = await dbConnection.query(query, [category, limit, offset])
+      const { data, error } = await supabaseAdmin
+        .from("foods")
+        .select("*")
+        .eq("category", category)
+        .order("is_verified", { ascending: false })
+        .order("name", { ascending: true })
+        .range(offset, offset + limit - 1)
 
-      return result.rows.map((row) => new Food(row))
+      if (error) throw error
+      return data.map((row) => new Food(row))
     } catch (error) {
       throw error
     }
   }
 
-  // Buscar alimentos por restricciones dietéticas
-  static async findByDietaryRestrictions(restrictions, limit = 50) {
-    try {
-      const query = `
-        SELECT * FROM foods 
-        WHERE dietary_restrictions && $1 
-        ORDER BY is_verified DESC, name 
-        LIMIT $2
-      `
-      const result = await dbConnection.query(query, [restrictions, limit])
-
-      return result.rows.map((row) => new Food(row))
-    } catch (error) {
-      throw error
-    }
-  }
-
-  // Buscar alimentos sin alérgenos específicos
-  static async findWithoutAllergens(allergens, limit = 50) {
-    try {
-      const query = `
-        SELECT * FROM foods 
-        WHERE NOT (allergens && $1) OR allergens IS NULL OR allergens = '{}'
-        ORDER BY is_verified DESC, name 
-        LIMIT $2
-      `
-      const result = await dbConnection.query(query, [allergens, limit])
-
-      return result.rows.map((row) => new Food(row))
-    } catch (error) {
-      throw error
-    }
-  }
-
-  // Actualizar alimento
   async update(updateData) {
     try {
-      const fields = []
-      const values = []
-      let paramCount = 1
+      const { data, error } = await supabaseAdmin.from("foods").update(updateData).eq("id", this.id).select().single()
 
-      Object.keys(updateData).forEach((key) => {
-        if (updateData[key] !== undefined && key !== "id") {
-          if (key === "vitamins" || key === "minerals") {
-            fields.push(`${key} = $${paramCount}`)
-            values.push(JSON.stringify(updateData[key]))
-          } else {
-            fields.push(`${key} = $${paramCount}`)
-            values.push(updateData[key])
-          }
-          paramCount++
-        }
-      })
-
-      if (fields.length === 0) {
-        return this
-      }
-
-      values.push(this.id)
-
-      const query = `
-        UPDATE foods 
-        SET ${fields.join(", ")}
-        WHERE id = $${paramCount}
-        RETURNING *
-      `
-
-      const result = await dbConnection.query(query, values)
-
-      if (result.rows.length > 0) {
-        Object.assign(this, result.rows[0])
-      }
-
+      if (error) throw error
+      Object.assign(this, data)
       return this
     } catch (error) {
       throw error
     }
   }
 
-  // Eliminar alimento
   async delete() {
     try {
-      const query = "DELETE FROM foods WHERE id = $1 RETURNING *"
-      const result = await dbConnection.query(query, [this.id])
+      const { error } = await supabaseAdmin.from("foods").delete().eq("id", this.id)
 
-      return result.rows.length > 0
+      if (error) throw error
+      return true
     } catch (error) {
       throw error
     }
   }
 
-  // Obtener todos los alimentos
   static async findAll(limit = 50, offset = 0) {
     try {
-      const query = `
-        SELECT * FROM foods 
-        ORDER BY is_verified DESC, name 
-        LIMIT $1 OFFSET $2
-      `
-      const result = await dbConnection.query(query, [limit, offset])
+      const { data, error } = await supabaseAdmin
+        .from("foods")
+        .select("*")
+        .order("is_verified", { ascending: false })
+        .order("name", { ascending: true })
+        .range(offset, offset + limit - 1)
 
-      return result.rows.map((row) => new Food(row))
+      if (error) throw error
+      return data.map((row) => new Food(row))
     } catch (error) {
       throw error
     }
   }
 
-  // Contar alimentos
-  static async count(filters = {}) {
-    try {
-      let query = "SELECT COUNT(*) FROM foods WHERE 1=1"
-      const values = []
-      let paramCount = 1
-
-      if (filters.category) {
-        query += ` AND category = $${paramCount}`
-        values.push(filters.category)
-        paramCount++
-      }
-
-      if (filters.is_verified !== undefined) {
-        query += ` AND is_verified = $${paramCount}`
-        values.push(filters.is_verified)
-      }
-
-      const result = await dbConnection.query(query, values)
-      return Number.parseInt(result.rows[0].count)
-    } catch (error) {
-      throw error
-    }
-  }
-
-  // Obtener categorías disponibles
   static async getCategories() {
     try {
-      const query = "SELECT DISTINCT category FROM foods ORDER BY category"
-      const result = await dbConnection.query(query)
+      const { data, error } = await supabaseAdmin
+        .from("foods")
+        .select("category")
+        .order("category", { ascending: true })
 
-      return result.rows.map((row) => row.category)
+      if (error) throw error
+
+      // Obtener valores únicos
+      const uniqueCategories = [...new Set(data.map((item) => item.category))]
+      return uniqueCategories
     } catch (error) {
       throw error
     }
   }
 
-  // Calcular información nutricional para una cantidad específica
   calculateNutritionForAmount(amount, unit) {
-    // Convertir a la unidad base del alimento
     let multiplier = 1
 
     if (this.serving_size_unit === "g" && unit === "kg") {

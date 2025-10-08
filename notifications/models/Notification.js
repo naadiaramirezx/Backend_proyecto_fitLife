@@ -1,4 +1,4 @@
-const dbConnection = require("../../config/database")
+const { supabaseAdmin } = require("../../config/supabaseClient")
 
 class Notification {
   constructor(notificationData) {
@@ -14,119 +14,118 @@ class Notification {
     this.created_at = notificationData.created_at
   }
 
-  // Crear nueva notificación
   static async create(notificationData) {
     try {
-      const query = `
-        INSERT INTO notifications (user_id, type, title, message, data, scheduled_for)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING *
-      `
+      const { data, error } = await supabaseAdmin
+        .from("notifications")
+        .insert([
+          {
+            user_id: notificationData.user_id,
+            type: notificationData.type,
+            title: notificationData.title,
+            message: notificationData.message,
+            data: notificationData.data || {},
+            scheduled_for: notificationData.scheduled_for || new Date().toISOString(),
+          },
+        ])
+        .select()
+        .single()
 
-      const values = [
-        notificationData.user_id,
-        notificationData.type,
-        notificationData.title,
-        notificationData.message,
-        JSON.stringify(notificationData.data || {}),
-        notificationData.scheduled_for || new Date(),
-      ]
-
-      const result = await dbConnection.query(query, values)
-      return new Notification(result.rows[0])
+      if (error) throw error
+      return new Notification(data)
     } catch (error) {
       throw error
     }
   }
 
-  // Buscar notificaciones por usuario
   static async findByUserId(userId, limit = 50, offset = 0) {
     try {
-      const query = `
-        SELECT * FROM notifications 
-        WHERE user_id = $1 
-        ORDER BY created_at DESC 
-        LIMIT $2 OFFSET $3
-      `
-      const result = await dbConnection.query(query, [userId, limit, offset])
+      const { data, error } = await supabaseAdmin
+        .from("notifications")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .range(offset, offset + limit - 1)
 
-      return result.rows.map((row) => new Notification(row))
+      if (error) throw error
+      return data.map((row) => new Notification(row))
     } catch (error) {
       throw error
     }
   }
 
-  // Buscar notificaciones no leídas
   static async findUnreadByUserId(userId) {
     try {
-      const query = `
-        SELECT * FROM notifications 
-        WHERE user_id = $1 AND is_read = false 
-        ORDER BY created_at DESC
-      `
-      const result = await dbConnection.query(query, [userId])
+      const { data, error } = await supabaseAdmin
+        .from("notifications")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("is_read", false)
+        .order("created_at", { ascending: false })
 
-      return result.rows.map((row) => new Notification(row))
+      if (error) throw error
+      return data.map((row) => new Notification(row))
     } catch (error) {
       throw error
     }
   }
 
-  // Marcar como leída
   async markAsRead() {
     try {
-      const query = "UPDATE notifications SET is_read = true WHERE id = $1 RETURNING *"
-      const result = await dbConnection.query(query, [this.id])
+      const { data, error } = await supabaseAdmin
+        .from("notifications")
+        .update({ is_read: true })
+        .eq("id", this.id)
+        .select()
+        .single()
 
-      if (result.rows.length > 0) {
-        this.is_read = true
-      }
-
+      if (error) throw error
+      this.is_read = true
       return this
     } catch (error) {
       throw error
     }
   }
 
-  // Marcar como enviada
   async markAsSent() {
     try {
-      const query = "UPDATE notifications SET sent_at = NOW() WHERE id = $1 RETURNING *"
-      const result = await dbConnection.query(query, [this.id])
+      const { data, error } = await supabaseAdmin
+        .from("notifications")
+        .update({ sent_at: new Date().toISOString() })
+        .eq("id", this.id)
+        .select()
+        .single()
 
-      if (result.rows.length > 0) {
-        this.sent_at = result.rows[0].sent_at
-      }
-
+      if (error) throw error
+      this.sent_at = data.sent_at
       return this
     } catch (error) {
       throw error
     }
   }
 
-  // Obtener notificaciones pendientes de envío
   static async findPendingNotifications() {
     try {
-      const query = `
-        SELECT * FROM notifications 
-        WHERE sent_at IS NULL AND scheduled_for <= NOW()
-        ORDER BY scheduled_for ASC
-      `
-      const result = await dbConnection.query(query)
+      const { data, error } = await supabaseAdmin
+        .from("notifications")
+        .select("*")
+        .is("sent_at", null)
+        .lte("scheduled_for", new Date().toISOString())
+        .order("scheduled_for", { ascending: true })
 
-      return result.rows.map((row) => new Notification(row))
+      if (error) throw error
+      return data.map((row) => new Notification(row))
     } catch (error) {
       throw error
     }
   }
 
-  // Eliminar notificación
   async delete() {
     try {
-      const query = "DELETE FROM notifications WHERE id = $1 RETURNING *"
-      const result = await dbConnection.query(query, [this.id])
+      const { error } = await supabaseAdmin.from("notifications").delete().eq("id", this.id)
 
-      return result.rows.length > 0
+      if (error) throw error
+      return true
     } catch (error) {
       throw error
     }

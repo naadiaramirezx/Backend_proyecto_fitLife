@@ -1,46 +1,33 @@
 const Food = require("../models/Food")
-const MealPlan = require("../models/MealPlan")
-const NutritionLog = require("../models/NutritionLog")
+const MealPlan = require("../models/MealPlant")
+const { NutritionLog, FoodEntry } = require("../models/NutritionLong")
 
 class NutritionController {
   // Buscar alimentos
   async searchFoods(req, res) {
     try {
-      const { query, category, page = 1, limit = 20 } = req.query
+      const { query, category, limit = 20 } = req.query
 
-      const searchCriteria = {}
+      let foods = []
 
       if (query) {
-        searchCriteria.$text = { $search: query }
+        foods = await Food.searchByName(query, Number.parseInt(limit))
+      } else if (category) {
+        foods = await Food.findByCategory(category, Number.parseInt(limit))
+      } else {
+        foods = await Food.findAll(Number.parseInt(limit))
       }
-
-      if (category) {
-        searchCriteria.category = category
-      }
-
-      const foods = await Food.find(searchCriteria)
-        .limit(limit * 1)
-        .skip((page - 1) * limit)
-        .sort({ isVerified: -1, name: 1 })
-
-      const total = await Food.countDocuments(searchCriteria)
 
       res.status(200).json({
         success: true,
-        data: {
-          foods,
-          pagination: {
-            current: page,
-            pages: Math.ceil(total / limit),
-            total,
-          },
-        },
+        data: { foods },
       })
     } catch (error) {
       console.error("Error buscando alimentos:", error)
       res.status(500).json({
         success: false,
         message: "Error interno del servidor",
+        error: error.message,
       })
     }
   }
@@ -50,7 +37,7 @@ class NutritionController {
     try {
       const { barcode } = req.params
 
-      const food = await Food.findOne({ barcode })
+      const food = await Food.findByBarcode(barcode)
       if (!food) {
         return res.status(404).json({
           success: false,
@@ -67,6 +54,7 @@ class NutritionController {
       res.status(500).json({
         success: false,
         message: "Error interno del servidor",
+        error: error.message,
       })
     }
   }
@@ -74,42 +62,40 @@ class NutritionController {
   // Crear plan de comidas personalizado
   async createPersonalizedMealPlan(req, res) {
     try {
-      const { userId, goal, targetCalories, macroTargets, dietaryRestrictions, allergens, duration = 7 } = req.body
+      const {
+        userId,
+        name,
+        goal,
+        startDate,
+        endDate,
+        targetCalories,
+        targetProtein,
+        targetCarbs,
+        targetFat,
+        dietaryRestrictions,
+      } = req.body
 
-      if (!userId || !goal || !targetCalories || !macroTargets) {
+      if (!userId || !goal || !targetCalories) {
         return res.status(400).json({
           success: false,
-          message: "userId, goal, targetCalories y macroTargets son requeridos",
+          message: "userId, goal y targetCalories son requeridos",
         })
       }
 
-      // Crear plan de comidas
-      const mealPlan = new MealPlan({
-        userId,
-        name: `Plan ${goal} - ${new Date().toLocaleDateString()}`,
+      const mealPlanData = {
+        user_id: userId,
+        name: name || `Plan ${goal} - ${new Date().toLocaleDateString()}`,
         goal,
-        targetCalories,
-        macroTargets,
-        dietaryRestrictions: dietaryRestrictions || [],
-        allergens: allergens || [],
-        endDate: new Date(Date.now() + duration * 24 * 60 * 60 * 1000),
-      })
-
-      // Generar planes diarios (simplificado - en producción sería más complejo)
-      for (let i = 0; i < duration; i++) {
-        const date = new Date()
-        date.setDate(date.getDate() + i)
-
-        const dailyPlan = {
-          date,
-          meals: await this.generateDailyMeals(targetCalories, macroTargets, dietaryRestrictions, allergens),
-          waterIntake: 2000, // 2 litros por defecto
-        }
-
-        mealPlan.dailyPlans.push(dailyPlan)
+        start_date: startDate || new Date().toISOString().split("T")[0],
+        end_date: endDate,
+        target_calories: targetCalories,
+        target_protein: targetProtein,
+        target_carbs: targetCarbs,
+        target_fat: targetFat,
+        dietary_restrictions: dietaryRestrictions || [],
       }
 
-      await mealPlan.save()
+      const mealPlan = await MealPlan.create(mealPlanData)
 
       res.status(201).json({
         success: true,
@@ -121,76 +107,20 @@ class NutritionController {
       res.status(500).json({
         success: false,
         message: "Error interno del servidor",
+        error: error.message,
       })
     }
-  }
-
-  // Método auxiliar para generar comidas diarias
-  async generateDailyMeals(targetCalories, macroTargets, dietaryRestrictions, allergens) {
-    // Distribución de calorías por comida
-    const calorieDistribution = {
-      breakfast: 0.25,
-      lunch: 0.35,
-      dinner: 0.3,
-      snack: 0.1,
-    }
-
-    const meals = []
-
-    for (const [mealType, percentage] of Object.entries(calorieDistribution)) {
-      const mealCalories = targetCalories * percentage
-
-      // Buscar alimentos apropiados (simplificado)
-      const foodCriteria = {}
-      if (dietaryRestrictions.length > 0) {
-        foodCriteria.dietaryRestrictions = { $in: dietaryRestrictions }
-      }
-      if (allergens.length > 0) {
-        foodCriteria.allergens = { $nin: allergens }
-      }
-
-      const availableFoods = await Food.find(foodCriteria).limit(10)
-
-      if (availableFoods.length > 0) {
-        // Seleccionar alimento aleatorio (en producción sería más inteligente)
-        const selectedFood = availableFoods[Math.floor(Math.random() * availableFoods.length)]
-
-        const meal = {
-          type: mealType,
-          name: `${mealType.charAt(0).toUpperCase() + mealType.slice(1)} del día`,
-          items: [
-            {
-              foodId: selectedFood._id,
-              quantity: 1,
-              unit: selectedFood.servingSize.unit,
-              calories: selectedFood.nutritionalInfo.calories,
-              protein: selectedFood.nutritionalInfo.protein,
-              carbohydrates: selectedFood.nutritionalInfo.carbohydrates,
-              fat: selectedFood.nutritionalInfo.fat,
-            },
-          ],
-          totalCalories: selectedFood.nutritionalInfo.calories,
-          totalProtein: selectedFood.nutritionalInfo.protein,
-          totalCarbohydrates: selectedFood.nutritionalInfo.carbohydrates,
-          totalFat: selectedFood.nutritionalInfo.fat,
-        }
-
-        meals.push(meal)
-      }
-    }
-
-    return meals
   }
 
   // Registrar consumo de alimentos
   async logFood(req, res) {
     try {
-      const { userId, foodId, quantity, unit, mealType } = req.body
+      const { userId, foodId, quantity, unit, mealType, date } = req.body
 
       if (!userId || !foodId || !quantity || !unit || !mealType) {
         return res.status(400).json({
           success: false,
-          message: "Todos los campos son requeridos",
+          message: "userId, foodId, quantity, unit y mealType son requeridos",
         })
       }
 
@@ -204,52 +134,58 @@ class NutritionController {
       }
 
       // Calcular valores nutricionales basados en la cantidad
-      const multiplier = quantity / food.servingSize.amount
-      const nutritionalValues = {
-        calories: food.nutritionalInfo.calories * multiplier,
-        protein: food.nutritionalInfo.protein * multiplier,
-        carbohydrates: food.nutritionalInfo.carbohydrates * multiplier,
-        fat: food.nutritionalInfo.fat * multiplier,
-      }
+      const nutritionalValues = food.calculateNutritionForAmount(quantity, unit)
+
+      // Fecha del log (hoy si no se especifica)
+      const logDate = date || new Date().toISOString().split("T")[0]
 
       // Buscar o crear log del día
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-
-      let nutritionLog = await NutritionLog.findOne({
-        userId,
-        date: today,
-      })
+      let nutritionLog = await NutritionLog.findByUserAndDate(userId, logDate)
 
       if (!nutritionLog) {
-        nutritionLog = new NutritionLog({
-          userId,
-          date: today,
-          entries: [],
+        nutritionLog = await NutritionLog.createOrUpdate({
+          user_id: userId,
+          date: logDate,
+          total_calories: 0,
+          total_protein: 0,
+          total_carbs: 0,
+          total_fat: 0,
+          water_intake: 0,
         })
       }
 
-      // Agregar entrada
-      nutritionLog.entries.push({
-        foodId,
+      // Crear entrada de alimento
+      const foodEntry = await FoodEntry.create({
+        nutrition_log_id: nutritionLog.id,
+        food_id: foodId,
+        meal_type: mealType,
         quantity,
         unit,
-        mealType,
-        ...nutritionalValues,
+        calories: nutritionalValues.calories,
+        protein: nutritionalValues.protein,
+        carbohydrates: nutritionalValues.carbohydrates,
+        fat: nutritionalValues.fat,
       })
 
-      await nutritionLog.save()
+      // Actualizar totales del log
+      await nutritionLog.update({
+        total_calories: nutritionLog.total_calories + nutritionalValues.calories,
+        total_protein: nutritionLog.total_protein + nutritionalValues.protein,
+        total_carbs: nutritionLog.total_carbs + nutritionalValues.carbohydrates,
+        total_fat: nutritionLog.total_fat + nutritionalValues.fat,
+      })
 
       res.status(201).json({
         success: true,
         message: "Alimento registrado exitosamente",
-        data: { nutritionLog },
+        data: { foodEntry, nutritionLog },
       })
     } catch (error) {
       console.error("Error registrando alimento:", error)
       res.status(500).json({
         success: false,
         message: "Error interno del servidor",
+        error: error.message,
       })
     }
   }
@@ -260,20 +196,36 @@ class NutritionController {
       const { userId } = req.params
       const { date, startDate, endDate } = req.query
 
-      const query = { userId }
+      let logs = []
 
       if (date) {
-        const targetDate = new Date(date)
-        targetDate.setHours(0, 0, 0, 0)
-        query.date = targetDate
+        const log = await NutritionLog.findByUserAndDate(userId, date)
+        if (log) {
+          const entries = await FoodEntry.findByNutritionLogId(log.id)
+          logs = [{ ...log, entries }]
+        }
       } else if (startDate && endDate) {
-        query.date = {
-          $gte: new Date(startDate),
-          $lte: new Date(endDate),
+        logs = await NutritionLog.findByDateRange(userId, startDate, endDate)
+        // Obtener entradas para cada log
+        for (const log of logs) {
+          log.entries = await FoodEntry.findByNutritionLogId(log.id)
+        }
+      } else {
+        // Por defecto, últimos 7 días
+        const today = new Date()
+        const weekAgo = new Date(today)
+        weekAgo.setDate(weekAgo.getDate() - 7)
+
+        logs = await NutritionLog.findByDateRange(
+          userId,
+          weekAgo.toISOString().split("T")[0],
+          today.toISOString().split("T")[0],
+        )
+
+        for (const log of logs) {
+          log.entries = await FoodEntry.findByNutritionLogId(log.id)
         }
       }
-
-      const logs = await NutritionLog.find(query).populate("entries.foodId").sort({ date: -1 })
 
       res.status(200).json({
         success: true,
@@ -284,6 +236,7 @@ class NutritionController {
       res.status(500).json({
         success: false,
         message: "Error interno del servidor",
+        error: error.message,
       })
     }
   }
@@ -293,8 +246,16 @@ class NutritionController {
     try {
       const { userId } = req.params
 
-      // Obtener logs recientes del usuario
-      const recentLogs = await NutritionLog.find({ userId }).sort({ date: -1 }).limit(7)
+      // Obtener logs recientes del usuario (últimos 7 días)
+      const today = new Date()
+      const weekAgo = new Date(today)
+      weekAgo.setDate(weekAgo.getDate() - 7)
+
+      const recentLogs = await NutritionLog.findByDateRange(
+        userId,
+        weekAgo.toISOString().split("T")[0],
+        today.toISOString().split("T")[0],
+      )
 
       if (recentLogs.length === 0) {
         return res.status(200).json({
@@ -327,6 +288,7 @@ class NutritionController {
       res.status(500).json({
         success: false,
         message: "Error interno del servidor",
+        error: error.message,
       })
     }
   }
@@ -335,11 +297,11 @@ class NutritionController {
   calculateNutritionAverages(logs) {
     const totals = logs.reduce(
       (acc, log) => {
-        acc.calories += log.dailyTotals.calories
-        acc.protein += log.dailyTotals.protein
-        acc.carbohydrates += log.dailyTotals.carbohydrates
-        acc.fat += log.dailyTotals.fat
-        acc.waterIntake += log.waterIntake
+        acc.calories += log.total_calories || 0
+        acc.protein += log.total_protein || 0
+        acc.carbohydrates += log.total_carbs || 0
+        acc.fat += log.total_fat || 0
+        acc.waterIntake += log.water_intake || 0
         return acc
       },
       { calories: 0, protein: 0, carbohydrates: 0, fat: 0, waterIntake: 0 },

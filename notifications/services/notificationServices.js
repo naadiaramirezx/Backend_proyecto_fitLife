@@ -1,85 +1,122 @@
-const Notification = require("../models/Notification")
+const NotificationPreference = require("../models/NotificationPreference")
+const { supabase } = require("../../config/supabaseClient")
 
 class NotificationService {
   async sendNotification(notification) {
     try {
-      // Simular envío de notificación push
-      if (notification.channels.includes("push")) {
-        await this.sendPushNotification(notification)
+      const preferences = await NotificationPreference.findByUserId(notification.user_id)
+
+      if (!preferences) {
+        console.log(`Usuario ${notification.user_id} no tiene preferencias configuradas`)
+        return { success: false, reason: "no_preferences" }
       }
 
-      // Simular envío de email
-      if (notification.channels.includes("email")) {
-        await this.sendEmailNotification(notification)
+      // Verificar horario de silencio
+      if (this.isQuietHours(preferences)) {
+        console.log(`Usuario ${notification.user_id} en horario de silencio`)
+        return { success: false, reason: "quiet_hours" }
       }
 
-      // Simular envío de SMS
-      if (notification.channels.includes("sms")) {
-        await this.sendSMSNotification(notification)
+      const results = []
+
+      // Enviar push notification si está habilitado
+      if (preferences.push_enabled && preferences.device_tokens?.length > 0) {
+        const pushResult = await this.sendPushNotification(notification, preferences)
+        results.push(pushResult)
       }
 
-      // Actualizar estado de la notificación
-      notification.status = "sent"
-      notification.sentAt = new Date()
-      await notification.save()
+      // Enviar email si está habilitado
+      if (preferences.email_enabled) {
+        const emailResult = await this.sendEmailNotification(notification)
+        results.push(emailResult)
+      }
 
-      console.log(`Notificación enviada: ${notification.title} para usuario ${notification.userId}`)
+      // Enviar SMS si está habilitado
+      if (preferences.sms_enabled) {
+        const smsResult = await this.sendSMSNotification(notification)
+        results.push(smsResult)
+      }
 
-      return { success: true }
+      // Marcar como enviada
+      await notification.markAsSent()
+
+      return { success: true, results }
     } catch (error) {
       console.error("Error enviando notificación:", error)
-
-      // Actualizar estado de error
-      notification.status = "failed"
-      notification.retryCount += 1
-      await notification.save()
-
       return { success: false, error: error.message }
     }
   }
 
-  async sendPushNotification(notification) {
-    // Aquí se integraría con un servicio real como Firebase Cloud Messaging
-    console.log(`[PUSH] ${notification.title}: ${notification.message}`)
+  async sendPushNotification(notification, preferences) {
+    try {
+      const audioPrefs = preferences.audio_preferences || {}
+      const sound = audioPrefs.enabled ? notification.data?.sound || "default.mp3" : null
 
-    // Simular delay de red
-    await new Promise((resolve) => setTimeout(resolve, 100))
+      const tokens = preferences.device_tokens.filter((t) => t.active !== false).map((t) => t.token)
 
-    return { success: true, channel: "push" }
+      if (tokens.length === 0) {
+        return { success: false, channel: "push", reason: "no_active_tokens" }
+      }
+
+      console.log(`[PUSH] Simulando envío a ${tokens.length} dispositivos`)
+      console.log(`[PUSH] Título: ${notification.title}`)
+      console.log(`[PUSH] Mensaje: ${notification.message}`)
+      console.log(`[PUSH] Sound: ${sound || "none"}`)
+
+      return {
+        success: true,
+        channel: "push",
+        successCount: tokens.length,
+        failureCount: 0,
+        simulated: true,
+      }
+    } catch (error) {
+      console.error("[PUSH] Error:", error)
+      return { success: false, channel: "push", error: error.message }
+    }
   }
 
   async sendEmailNotification(notification) {
-    // Aquí se integraría con un servicio real como SendGrid, Mailgun, etc.
-    console.log(`[EMAIL] ${notification.title}: ${notification.message}`)
-
-    // Simular delay de red
-    await new Promise((resolve) => setTimeout(resolve, 200))
-
-    return { success: true, channel: "email" }
+    try {
+      console.log(`[EMAIL] ${notification.title}: ${notification.message}`)
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      return { success: true, channel: "email", simulated: true }
+    } catch (error) {
+      console.error("[EMAIL] Error:", error)
+      return { success: false, channel: "email", error: error.message }
+    }
   }
 
   async sendSMSNotification(notification) {
-    // Aquí se integraría con un servicio real como Twilio, AWS SNS, etc.
-    console.log(`[SMS] ${notification.title}: ${notification.message}`)
-
-    // Simular delay de red
-    await new Promise((resolve) => setTimeout(resolve, 150))
-
-    return { success: true, channel: "sms" }
+    try {
+      console.log(`[SMS] ${notification.title}: ${notification.message}`)
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      return { success: true, channel: "sms", simulated: true }
+    } catch (error) {
+      console.error("[SMS] Error:", error)
+      return { success: false, channel: "sms", error: error.message }
+    }
   }
 
-  async retryFailedNotifications() {
-    const failedNotifications = await Notification.find({
-      status: "failed",
-      retryCount: { $lt: 3 },
-      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }, // últimas 24 horas
-    })
-
-    for (const notification of failedNotifications) {
-      await this.sendNotification(notification)
+  isQuietHours(preferences) {
+    if (!preferences.quiet_hours?.enabled) {
+      return false
     }
 
-    return failedNotifications.length
+    const now = new Date()
+    const currentTime = now.getHours() * 60 + now.getMinutes()
+
+    const [startHour, startMin] = preferences.quiet_hours.start.split(":").map(Number)
+    const [endHour, endMin] = preferences.quiet_hours.end.split(":").map(Number)
+
+    const startTime = startHour * 60 + startMin
+    const endTime = endHour * 60 + endMin
+
+    if (startTime < endTime) {
+      return currentTime >= startTime && currentTime < endTime
+    } else {
+      return currentTime >= startTime || currentTime < endTime
+    }
   }
 }
 

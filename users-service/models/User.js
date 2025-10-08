@@ -1,248 +1,248 @@
-const bcrypt = require("bcryptjs")
-const jwt = require("jsonwebtoken")
-const dbConnection = require("../../config/database")
+const { supabase, supabaseAdmin } = require("../../config/supabaseClient")
 
 class User {
   constructor(userData) {
-    this.id_usuario = userData.id_usuario
+    this.id_perfil = userData.id_perfil
+    this.user_id = userData.user_id
     this.correo = userData.correo
-    this.password = userData.password
-    this.perfil_id = userData.perfil_id
-    this.is_active = userData.is_active
+    this.nombre = userData.nombre
+    this.ap_paterno = userData.ap_paterno
+    this.ap_materno = userData.ap_materno
+    this.telefono = userData.telefono
+    this.peso = userData.peso
+    this.altura = userData.altura
     this.created_at = userData.created_at
-    this.updated_at = userData.updated_at
   }
 
-  // Crear nuevo usuario
-  static async create(userData) {
-    try {
-      // Hash password
-      const salt = await bcrypt.genSalt(12)
-      const hashedPassword = await bcrypt.hash(userData.password, salt)
-
-      const profileQuery = `
-        INSERT INTO perfil_id (nombres, ap_paterno, ap_materno, telefono)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id_perfil
-      `
-
-      const profileValues = [
-        userData.nombres,
-        userData.ap_paterno || "",
-        userData.ap_materno || "",
-        userData.telefono || "",
-      ]
-
-      const profileResult = await dbConnection.query(profileQuery, profileValues)
-      const perfilId = profileResult.rows[0].id_perfil
-
-      const userQuery = `
-        INSERT INTO usuarios (correo, password, perfil_id, is_active)
-        VALUES ($1, $2, $3, $4)
-        RETURNING *
-      `
-
-      const userValues = [userData.correo, hashedPassword, perfilId, true]
-
-      const userResult = await dbConnection.query(userQuery, userValues)
-
-      if (userData.peso && userData.altura) {
-        const measurementQuery = `
-          INSERT INTO mediciones_corporales (perfil_id, peso, altura, fecha)
-          VALUES ($1, $2, $3, NOW())
-        `
-        await dbConnection.query(measurementQuery, [perfilId, userData.peso, userData.altura])
-      }
-
-      return new User(userResult.rows[0])
-    } catch (error) {
-      throw error
+  toPublicJSON() {
+    return {
+      id: this.id_perfil,
+      user_id: this.user_id,
+      email: this.correo,
+      perfil: {
+        id: this.id_perfil,
+        nombre: this.nombre,
+        ap_paterno: this.ap_paterno,
+        ap_materno: this.ap_materno,
+        telefono: this.telefono,
+      },
+      mediciones: {
+        peso: this.peso,
+        altura: this.altura,
+      },
+      created_at: this.created_at,
     }
   }
 
-  // Buscar usuario por email
-  static async findByEmail(correo) {
+  async update(updates) {
     try {
-      const query = `
-        SELECT u.*, p.nombres, p.ap_paterno, p.ap_materno, p.telefono
-        FROM usuarios u
-        JOIN perfil_id p ON u.perfil_id = p.id_perfil
-        WHERE u.correo = $1 AND u.is_active = true
-      `
-      const result = await dbConnection.query(query, [correo])
-
-      if (result.rows.length === 0) {
-        return null
+      const allowedFields = {
+        nombre: updates.nombre,
+        ap_paterno: updates.ap_paterno,
+        ap_materno: updates.ap_materno,
+        telefono: updates.telefono,
       }
 
-      return new User(result.rows[0])
-    } catch (error) {
-      throw error
-    }
-  }
-
-  // Buscar usuario por ID
-  static async findById(id_usuario) {
-    try {
-      const query = `
-        SELECT u.*, p.nombres, p.ap_paterno, p.ap_materno, p.telefono
-        FROM usuarios u
-        JOIN perfil_id p ON u.perfil_id = p.id_perfil
-        WHERE u.id_usuario = $1 AND u.is_active = true
-      `
-      const result = await dbConnection.query(query, [id_usuario])
-
-      if (result.rows.length === 0) {
-        return null
-      }
-
-      return new User(result.rows[0])
-    } catch (error) {
-      throw error
-    }
-  }
-
-  // Actualizar usuario
-  async update(updateData) {
-    try {
-      const fields = []
-      const values = []
-      let paramCount = 1
-
-      // Construir query dinámicamente
-      Object.keys(updateData).forEach((key) => {
-        if (updateData[key] !== undefined && key !== "id_usuario") {
-          fields.push(`${key} = $${paramCount}`)
-          values.push(updateData[key])
-          paramCount++
+      const fieldsToUpdate = {}
+      Object.keys(allowedFields).forEach((key) => {
+        if (allowedFields[key] !== undefined) {
+          fieldsToUpdate[key] = allowedFields[key]
         }
       })
 
-      if (fields.length === 0) {
+      if (Object.keys(fieldsToUpdate).length === 0 && !updates.peso && !updates.altura) {
         return this
       }
 
-      values.push(this.id_usuario) // Para el WHERE clause
+      if (Object.keys(fieldsToUpdate).length > 0) {
+        const { data: profileData, error: profileError } = await supabase
+          .from("perfiles")
+          .update(fieldsToUpdate)
+          .eq("id_perfil", this.id_perfil)
+          .select()
+          .single()
 
-      const query = `
-        UPDATE usuarios 
-        SET ${fields.join(", ")}, updated_at = NOW()
-        WHERE id_usuario = $${paramCount}
-        RETURNING *
-      `
+        if (profileError) throw profileError
 
-      const result = await dbConnection.query(query, values)
+        Object.assign(this, profileData)
+      }
 
-      if (result.rows.length > 0) {
-        Object.assign(this, result.rows[0])
+      if (updates.peso || updates.altura) {
+        const peso = updates.peso || this.peso
+        const altura = updates.altura || this.altura
+
+        const { error: measurementError } = await supabase.from("mediciones_corporales").insert({
+          perfil_id: this.id_perfil,
+          peso: peso,
+          altura: altura,
+          fecha: new Date().toISOString().split("T")[0],
+        })
+
+        if (measurementError) throw measurementError
+
+        this.peso = peso
+        this.altura = altura
       }
 
       return this
     } catch (error) {
+      console.error("Error actualizando usuario:", error)
       throw error
     }
   }
 
-  // Eliminar usuario (soft delete)
-  async delete() {
+  static async create(userData) {
     try {
-      const query = "UPDATE usuarios SET is_active = false, updated_at = NOW() WHERE id_usuario = $1 RETURNING *"
-      const result = await dbConnection.query(query, [this.id_usuario])
-
-      if (result.rows.length > 0) {
-        this.is_active = false
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (!emailRegex.test(userData.correo)) {
+        throw new Error("Formato de email inválido")
       }
 
-      return this
-    } catch (error) {
-      throw error
-    }
-  }
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email: userData.correo,
+        password: userData.password,
+        email_confirm: true,
+      })
 
-  // Comparar contraseña
-  async comparePassword(candidatePassword) {
-    return await bcrypt.compare(candidatePassword, this.password)
-  }
+      if (authError) throw authError
+      if (!authData.user) throw new Error("No se pudo crear el usuario en Supabase Auth")
 
-  // Generar token JWT
-  generateAuthToken() {
-    return jwt.sign(
-      {
-        userId: this.id_usuario,
-        email: this.correo,
-        perfilId: this.perfil_id,
-      },
-      process.env.JWT_SECRET || "fitlife_secret_key",
-      { expiresIn: "7d" },
-    )
-  }
+      const authUserId = authData.user.id
 
-  // Verificar email
-  async verifyEmail() {
-    try {
-      const query = "UPDATE usuarios SET correo_verified = true, updated_at = NOW() WHERE id_usuario = $1 RETURNING *"
-      const result = await dbConnection.query(query, [this.id_usuario])
+      const { data: profileData, error: profileError } = await supabase
+        .from("perfiles")
+        .insert({
+          user_id: authUserId,
+          nombre: userData.nombre,
+          ap_paterno: userData.ap_paterno,
+          ap_materno: userData.ap_materno || "",
+          telefono: userData.telefono || "",
+        })
+        .select()
+        .single()
 
-      if (result.rows.length > 0) {
-        this.correo_verified = true
+      if (profileError) {
+        await supabaseAdmin.auth.admin.deleteUser(authUserId)
+        throw profileError
       }
 
-      return this
+      const perfilId = profileData.id_perfil
+
+      if (userData.peso && userData.altura) {
+        const { error: measurementError } = await supabase.from("mediciones_corporales").insert({
+          perfil_id: perfilId,
+          peso: userData.peso,
+          altura: userData.altura,
+          fecha: new Date().toISOString().split("T")[0],
+        })
+
+        if (measurementError) console.error("Error insertando mediciones:", measurementError)
+      }
+
+      const completeUser = await User.findByUserId(authUserId)
+      return completeUser
     } catch (error) {
+      console.error("Error creando usuario:", error)
       throw error
     }
   }
 
-  // Obtener todos los usuarios (para admin)
-  static async findAll(limit = 50, offset = 0) {
+  static async findByUserId(userId) {
     try {
-      const query = `
-        SELECT u.*, p.nombres, p.ap_paterno, p.ap_materno, p.telefono
-        FROM usuarios u
-        JOIN perfil_id p ON u.perfil_id = p.id_perfil
-        WHERE u.is_active = true 
-        ORDER BY u.created_at DESC 
-        LIMIT $1 OFFSET $2
-      `
-      const result = await dbConnection.query(query, [limit, offset])
+      const { data: perfil, error: perfilError } = await supabase
+        .from("perfiles")
+        .select("*")
+        .eq("user_id", userId)
+        .single()
 
-      return result.rows.map((row) => new User(row))
+      if (perfilError) {
+        if (perfilError.code === "PGRST116") return null
+        throw perfilError
+      }
+
+      if (!perfil) return null
+
+      // Obtener email del usuario de auth
+      const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(userId)
+
+      // Obtener última medición
+      const { data: mediciones } = await supabase
+        .from("mediciones_corporales")
+        .select("peso, altura")
+        .eq("perfil_id", perfil.id_perfil)
+        .order("fecha", { ascending: false })
+        .limit(1)
+        .single()
+
+      const userData = {
+        ...perfil,
+        correo: authUser.user?.email,
+        peso: mediciones?.peso,
+        altura: mediciones?.altura,
+      }
+
+      return new User(userData)
     } catch (error) {
+      console.error("Error buscando usuario por user_id:", error)
       throw error
     }
   }
 
-  // Contar usuarios activos
-  static async count() {
+  static async findByEmail(correo) {
     try {
-      const query = "SELECT COUNT(*) FROM usuarios WHERE is_active = true"
-      const result = await dbConnection.query(query)
+      // Buscar en Supabase Auth
+      const { data: authUsers, error: authError } = await supabaseAdmin.auth.admin.listUsers()
 
-      return Number.parseInt(result.rows[0].count)
+      if (authError) throw authError
+
+      const authUser = authUsers.users.find((u) => u.email === correo)
+      if (!authUser) return null
+
+      // Buscar perfil asociado
+      return await User.findByUserId(authUser.id)
     } catch (error) {
+      console.error("Error buscando usuario por email:", error)
       throw error
     }
   }
 
-  // Método para obtener datos públicos del usuario (sin password)
-  toPublicJSON() {
-    const { password, ...publicData } = this
-    return publicData
-  }
-
-  // Método para obtener las últimas mediciones corporales
-  async getLatestMeasurements() {
+  static async findById(id_perfil) {
     try {
-      const query = `
-        SELECT peso, altura, fecha
-        FROM mediciones_corporales
-        WHERE perfil_id = $1
-        ORDER BY fecha DESC
-        LIMIT 1
-      `
-      const result = await dbConnection.query(query, [this.perfil_id])
-      return result.rows[0] || null
+      const { data: perfil, error: perfilError } = await supabase
+        .from("perfiles")
+        .select("*")
+        .eq("id_perfil", id_perfil)
+        .single()
+
+      if (perfilError) {
+        if (perfilError.code === "PGRST116") return null
+        throw perfilError
+      }
+
+      if (!perfil) return null
+
+      // Obtener email del usuario de auth
+      const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(perfil.user_id)
+
+      // Obtener última medición
+      const { data: mediciones } = await supabase
+        .from("mediciones_corporales")
+        .select("peso, altura")
+        .eq("perfil_id", perfil.id_perfil)
+        .order("fecha", { ascending: false })
+        .limit(1)
+        .single()
+
+      const userData = {
+        ...perfil,
+        correo: authUser.user?.email,
+        peso: mediciones?.peso,
+        altura: mediciones?.altura,
+      }
+
+      return new User(userData)
     } catch (error) {
+      console.error("Error buscando usuario por ID:", error)
       throw error
     }
   }

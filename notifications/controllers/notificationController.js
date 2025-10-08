@@ -1,9 +1,9 @@
 const Notification = require("../models/Notification")
 const NotificationPreference = require("../models/NotificationPreference")
-const NotificationService = require("../services/notificationService")
+const NotificationService = require("../services/notificationServices");
+
 
 class NotificationController {
-  // RF09: Enviar notificaciones para recordar rutinas
   async sendWorkoutReminder(req, res) {
     try {
       const { userId, workoutName, scheduledTime } = req.body
@@ -15,23 +15,19 @@ class NotificationController {
         })
       }
 
-      const notification = new Notification({
-        userId,
+      const notification = await Notification.create({
+        user_id: userId,
         type: "workout_reminder",
         title: "¡Hora de entrenar! 💪",
         message: `Es momento de realizar tu rutina: ${workoutName}`,
-        scheduledFor: scheduledTime ? new Date(scheduledTime) : new Date(),
-        channels: ["push"],
+        scheduled_for: scheduledTime ? new Date(scheduledTime) : new Date(),
         data: {
           workoutName,
           actionType: "start_workout",
+          sound: "workout.mp3",
         },
-        actionUrl: "/workouts/start",
       })
 
-      await notification.save()
-
-      // Enviar inmediatamente si no hay tiempo programado
       if (!scheduledTime) {
         await NotificationService.sendNotification(notification)
       }
@@ -50,104 +46,39 @@ class NotificationController {
     }
   }
 
-  // Enviar recordatorio de comida
-  async sendMealReminder(req, res) {
+  async sendLoginNotification(req, res) {
     try {
-      const { userId, mealType, scheduledTime } = req.body
+      const { userId, deviceInfo } = req.body
 
-      if (!userId || !mealType) {
+      if (!userId) {
         return res.status(400).json({
           success: false,
-          message: "userId y mealType son requeridos",
+          message: "userId es requerido",
         })
       }
 
-      const mealNames = {
-        breakfast: "desayuno",
-        lunch: "almuerzo",
-        dinner: "cena",
-        snack: "snack",
-      }
-
-      const notification = new Notification({
-        userId,
-        type: "meal_reminder",
-        title: `Hora de tu ${mealNames[mealType]} 🍽️`,
-        message: `No olvides registrar tu ${mealNames[mealType]} para mantener tu seguimiento nutricional`,
-        scheduledFor: scheduledTime ? new Date(scheduledTime) : new Date(),
-        channels: ["push"],
+      const notification = await Notification.create({
+        user_id: userId,
+        type: "login",
+        title: "¡Bienvenido de vuelta! 👋",
+        message: `Has iniciado sesión desde ${deviceInfo?.deviceName || "un dispositivo"}`,
+        scheduled_for: new Date(),
         data: {
-          mealType,
-          actionType: "log_meal",
-        },
-        actionUrl: "/nutrition/log",
-      })
-
-      await notification.save()
-
-      if (!scheduledTime) {
-        await NotificationService.sendNotification(notification)
-      }
-
-      res.status(201).json({
-        success: true,
-        message: "Recordatorio de comida programado exitosamente",
-        data: { notification },
-      })
-    } catch (error) {
-      console.error("Error enviando recordatorio de comida:", error)
-      res.status(500).json({
-        success: false,
-        message: "Error interno del servidor",
-      })
-    }
-  }
-
-  // RF10: Enviar alerta de salud
-  async sendHealthAlert(req, res) {
-    try {
-      const { userId, alertType, value, severity, message } = req.body
-
-      if (!userId || !alertType || !severity) {
-        return res.status(400).json({
-          success: false,
-          message: "userId, alertType y severity son requeridos",
-        })
-      }
-
-      const alertTitles = {
-        heart_rate: "⚠️ Alerta de Ritmo Cardíaco",
-        temperature: "🌡️ Alerta de Temperatura",
-        blood_oxygen: "🫁 Alerta de Oxígeno en Sangre",
-        blood_pressure: "💓 Alerta de Presión Arterial",
-      }
-
-      const notification = new Notification({
-        userId,
-        type: "health_alert",
-        title: alertTitles[alertType] || "⚠️ Alerta de Salud",
-        message: message || `Se ha detectado un valor anormal en ${alertType}: ${value}`,
-        priority: severity === "urgent" ? "urgent" : "high",
-        scheduledFor: new Date(),
-        channels: severity === "urgent" ? ["push", "sms"] : ["push"],
-        data: {
-          alertType,
-          value,
-          severity,
-          timestamp: new Date(),
+          deviceInfo,
+          loginTime: new Date(),
+          sound: "login.mp3",
         },
       })
 
-      await notification.save()
       await NotificationService.sendNotification(notification)
 
       res.status(201).json({
         success: true,
-        message: "Alerta de salud enviada exitosamente",
+        message: "Notificación de inicio de sesión enviada",
         data: { notification },
       })
     } catch (error) {
-      console.error("Error enviando alerta de salud:", error)
+      console.error("Error enviando notificación de login:", error)
       res.status(500).json({
         success: false,
         message: "Error interno del servidor",
@@ -155,43 +86,39 @@ class NotificationController {
     }
   }
 
-  // Enviar notificación de logro
-  async sendAchievementNotification(req, res) {
+  async sendOverdueReminder(req, res) {
     try {
-      const { userId, achievementType, description } = req.body
+      const { userId, taskName, daysOverdue } = req.body
 
-      if (!userId || !achievementType) {
+      if (!userId || !taskName) {
         return res.status(400).json({
           success: false,
-          message: "userId y achievementType son requeridos",
+          message: "userId y taskName son requeridos",
         })
       }
 
-      const notification = new Notification({
-        userId,
-        type: "achievement",
-        title: "🎉 ¡Felicitaciones!",
-        message: description || `Has desbloqueado un nuevo logro: ${achievementType}`,
-        priority: "medium",
-        scheduledFor: new Date(),
-        channels: ["push"],
+      const notification = await Notification.create({
+        user_id: userId,
+        type: "overdue",
+        title: "⚠️ Ejercicio atrasado",
+        message: `Tienes ${taskName} atrasado por ${daysOverdue} día(s)`,
+        scheduled_for: new Date(),
         data: {
-          achievementType,
-          unlockedAt: new Date(),
+          taskName,
+          daysOverdue,
+          sound: "overdue.mp3",
         },
-        actionUrl: "/achievements",
       })
 
-      await notification.save()
       await NotificationService.sendNotification(notification)
 
       res.status(201).json({
         success: true,
-        message: "Notificación de logro enviada exitosamente",
+        message: "Recordatorio de atraso enviado",
         data: { notification },
       })
     } catch (error) {
-      console.error("Error enviando notificación de logro:", error)
+      console.error("Error enviando recordatorio de atraso:", error)
       res.status(500).json({
         success: false,
         message: "Error interno del servidor",
@@ -199,38 +126,24 @@ class NotificationController {
     }
   }
 
-  // Obtener notificaciones del usuario
   async getUserNotifications(req, res) {
     try {
       const { userId } = req.params
-      const { status, type, page = 1, limit = 20 } = req.query
+      const { page = 1, limit = 20 } = req.query
 
-      const query = { userId }
-
-      if (status) query.status = status
-      if (type) query.type = type
-
-      const notifications = await Notification.find(query)
-        .sort({ createdAt: -1 })
-        .limit(limit * 1)
-        .skip((page - 1) * limit)
-
-      const total = await Notification.countDocuments(query)
-      const unreadCount = await Notification.countDocuments({
-        userId,
-        status: { $in: ["sent", "delivered"] },
-      })
+      const offset = (page - 1) * limit
+      const notifications = await Notification.findByUserId(userId, limit, offset)
+      const unread = await Notification.findUnreadByUserId(userId)
 
       res.status(200).json({
         success: true,
         data: {
           notifications,
+          unreadCount: unread.length,
           pagination: {
-            current: page,
-            pages: Math.ceil(total / limit),
-            total,
+            current: Number.parseInt(page),
+            limit: Number.parseInt(limit),
           },
-          unreadCount,
         },
       })
     } catch (error) {
@@ -242,19 +155,12 @@ class NotificationController {
     }
   }
 
-  // Marcar notificación como leída
   async markAsRead(req, res) {
     try {
       const { notificationId } = req.params
 
-      const notification = await Notification.findByIdAndUpdate(
-        notificationId,
-        {
-          status: "read",
-          readAt: new Date(),
-        },
-        { new: true },
-      )
+      const notifications = await Notification.findByUserId(req.user?.id || "")
+      const notification = notifications.find((n) => n.id === notificationId)
 
       if (!notification) {
         return res.status(404).json({
@@ -262,6 +168,8 @@ class NotificationController {
           message: "Notificación no encontrada",
         })
       }
+
+      await notification.markAsRead()
 
       res.status(200).json({
         success: true,
@@ -277,17 +185,14 @@ class NotificationController {
     }
   }
 
-  // Obtener preferencias de notificación
   async getNotificationPreferences(req, res) {
     try {
       const { userId } = req.params
 
-      let preferences = await NotificationPreference.findOne({ userId })
+      let preferences = await NotificationPreference.findByUserId(userId)
 
       if (!preferences) {
-        // Crear preferencias por defecto
-        preferences = new NotificationPreference({ userId })
-        await preferences.save()
+        preferences = await NotificationPreference.create(userId)
       }
 
       res.status(200).json({
@@ -303,22 +208,23 @@ class NotificationController {
     }
   }
 
-  // Actualizar preferencias de notificación
   async updateNotificationPreferences(req, res) {
     try {
       const { userId } = req.params
-      const { preferences } = req.body
+      const updates = req.body
 
-      const updatedPreferences = await NotificationPreference.findOneAndUpdate(
-        { userId },
-        { $set: { preferences } },
-        { new: true, upsert: true },
-      )
+      let preferences = await NotificationPreference.findByUserId(userId)
+
+      if (!preferences) {
+        preferences = await NotificationPreference.create(userId, updates)
+      } else {
+        preferences = await NotificationPreference.update(userId, updates)
+      }
 
       res.status(200).json({
         success: true,
         message: "Preferencias actualizadas exitosamente",
-        data: { preferences: updatedPreferences },
+        data: { preferences },
       })
     } catch (error) {
       console.error("Error actualizando preferencias:", error)
@@ -329,40 +235,76 @@ class NotificationController {
     }
   }
 
-  // Enviar resumen semanal
-  async sendWeeklySummary(req, res) {
+  async updateAudioPreferences(req, res) {
     try {
-      const { userId, summaryData } = req.body
+      const { userId } = req.params
+      const { audioPreferences } = req.body
 
-      if (!userId || !summaryData) {
+      const preferences = await NotificationPreference.update(userId, { audio_preferences: audioPreferences })
+
+      res.status(200).json({
+        success: true,
+        message: "Preferencias de audio actualizadas",
+        data: { preferences },
+      })
+    } catch (error) {
+      console.error("Error actualizando preferencias de audio:", error)
+      res.status(500).json({
+        success: false,
+        message: "Error interno del servidor",
+      })
+    }
+  }
+
+  async registerDeviceToken(req, res) {
+    try {
+      const { userId } = req.params
+      const tokenData = req.body
+
+      if (!tokenData.token) {
         return res.status(400).json({
           success: false,
-          message: "userId y summaryData son requeridos",
+          message: "Token es requerido",
         })
       }
 
-      const notification = new Notification({
-        userId,
-        type: "weekly_summary",
-        title: "📊 Tu Resumen Semanal",
-        message: "Revisa tu progreso de la semana y planifica la siguiente",
-        priority: "low",
-        scheduledFor: new Date(),
-        channels: ["push", "email"],
-        data: summaryData,
-        actionUrl: "/dashboard/weekly-report",
-      })
+      const preferences = await NotificationPreference.addDeviceToken(userId, tokenData)
 
-      await notification.save()
-      await NotificationService.sendNotification(notification)
-
-      res.status(201).json({
+      res.status(200).json({
         success: true,
-        message: "Resumen semanal enviado exitosamente",
-        data: { notification },
+        message: "Token de dispositivo registrado",
+        data: { preferences },
       })
     } catch (error) {
-      console.error("Error enviando resumen semanal:", error)
+      console.error("Error registrando token:", error)
+      res.status(500).json({
+        success: false,
+        message: "Error interno del servidor",
+      })
+    }
+  }
+
+  async removeDeviceToken(req, res) {
+    try {
+      const { userId } = req.params
+      const { token } = req.body
+
+      if (!token) {
+        return res.status(400).json({
+          success: false,
+          message: "Token es requerido",
+        })
+      }
+
+      const preferences = await NotificationPreference.removeDeviceToken(userId, token)
+
+      res.status(200).json({
+        success: true,
+        message: "Token de dispositivo eliminado",
+        data: { preferences },
+      })
+    } catch (error) {
+      console.error("Error eliminando token:", error)
       res.status(500).json({
         success: false,
         message: "Error interno del servidor",
