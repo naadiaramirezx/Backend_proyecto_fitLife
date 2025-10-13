@@ -1,149 +1,159 @@
-const dbConnection = require("../../config/database")
+// models/UserPlan.js
+const { supabaseAdmin } = require("../../config/supabaseClient")
 
 class UserPlan {
-  constructor(userPlanData) {
-    this.id = userPlanData.id
-    this.user_id = userPlanData.user_id
-    this.plan_id = userPlanData.plan_id
-    this.start_date = userPlanData.start_date
-    this.end_date = userPlanData.end_date
-    this.status = userPlanData.status
-    this.progress = userPlanData.progress
-    this.created_at = userPlanData.created_at
-    this.updated_at = userPlanData.updated_at
+  constructor(row) {
+    this.id_suscripcion = row.id_suscripcion
+    this.plan_id        = row.plan_id
+    this.perfil_id      = row.perfil_id
+    this.id_estado      = row.id_estado
+    this.fecha_inicio   = row.fecha_inicio
+    this.fecha_fin      = row.fecha_fin
+    this.created_at     = row.created_at
+    // opcionalmente “plan_*” si los trae el select
+    this.plan_nombre    = row.plan_nombre
+    this.objetivo       = row.objetivo
+    this.duracion_dias  = row.duracion_dias
   }
 
-  // Crear nuevo plan de usuario
-  static async create(userPlanData) {
-    try {
-      const query = `
-        INSERT INTO user_plans (user_id, plan_id, start_date, end_date, status, progress)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING *
-      `
+  static async create(data) {
+    const { data: row, error } = await supabaseAdmin
+      .from("suscripciones")
+      .insert({
+        plan_id: data.plan_id,
+        perfil_id: data.perfil_id,
+        id_estado: data.id_estado ?? 1,
+        fecha_inicio: data.fecha_inicio,
+        fecha_fin: data.fecha_fin,
+      })
+      .select()
+      .single()
 
-      const values = [
-        userPlanData.user_id,
-        userPlanData.plan_id,
-        userPlanData.start_date,
-        userPlanData.end_date,
-        userPlanData.status || "active",
-        JSON.stringify(userPlanData.progress || {}),
-      ]
-
-      const result = await dbConnection.query(query, values)
-      return new UserPlan(result.rows[0])
-    } catch (error) {
-      throw error
-    }
+    if (error) throw error
+    return new UserPlan(row)
   }
 
-  // Buscar plan por usuario
-  static async findByUserId(userId, status = null) {
-    try {
-      let query = "SELECT * FROM user_plans WHERE user_id = $1"
-      const values = [userId]
+  static async findByUserId(perfilId, estado = null) {
+    let query = supabaseAdmin
+      .from("suscripciones")
+      .select(`
+        *,
+        planes:plan_id ( id_plan, nombre, objetivo, duracion_dias )
+      `)
+      .eq("perfil_id", perfilId)
+      .order("created_at", { ascending: false })
 
-      if (status) {
-        query += " AND status = $2"
-        values.push(status)
-      }
+    if (estado) query = query.eq("id_estado", estado)
 
-      query += " ORDER BY created_at DESC"
+    const { data, error } = await query
+    if (error) throw error
 
-      const result = await dbConnection.query(query, values)
-      return result.rows.map((row) => new UserPlan(row))
-    } catch (error) {
-      throw error
-    }
+    const mapped = (data || []).map((row) => {
+      const plan = row.planes || {}
+      return new UserPlan({
+        ...row,
+        plan_nombre: plan.nombre,
+        objetivo: plan.objetivo,
+        duracion_dias: plan.duracion_dias,
+      })
+    })
+    return mapped
   }
 
-  // Buscar plan activo del usuario
-  static async findActiveByUserId(userId) {
-    try {
-      const query = "SELECT * FROM user_plans WHERE user_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT 1"
-      const result = await dbConnection.query(query, [userId, "active"])
+  static async findActiveByUserId(perfilId) {
+    const { data, error } = await supabaseAdmin
+      .from("suscripciones")
+      .select(`
+        *,
+        planes:plan_id ( id_plan, nombre, objetivo, duracion_dias )
+      `)
+      .eq("perfil_id", perfilId)
+      .eq("id_estado", 1)
+      .order("created_at", { ascending: false })
+      .limit(1)
+    
+    if (error) throw error
+    if (!data || data.length === 0) return null
 
-      if (result.rows.length === 0) {
-        return null
-      }
-
-      return new UserPlan(result.rows[0])
-    } catch (error) {
-      throw error
-    }
+    const row = data[0]
+    const plan = row.planes || {}
+    return new UserPlan({
+      ...row,
+      plan_nombre: plan.nombre,
+      objetivo: plan.objetivo,
+      duracion_dias: plan.duracion_dias,
+    })
   }
 
-  // Actualizar progreso
-  async updateProgress(progressData) {
-    try {
-      const currentProgress = this.progress || {}
-      const updatedProgress = { ...currentProgress, ...progressData }
+  async updateStatus(nuevoEstado) {
+    const { data: row, error } = await supabaseAdmin
+      .from("suscripciones")
+      .update({ id_estado: nuevoEstado })
+      .eq("id_suscripcion", this.id_suscripcion)
+      .select()
+      .single()
 
-      const query = `
-        UPDATE user_plans 
-        SET progress = $1, updated_at = NOW()
-        WHERE id = $2
-        RETURNING *
-      `
-
-      const result = await dbConnection.query(query, [JSON.stringify(updatedProgress), this.id])
-
-      if (result.rows.length > 0) {
-        this.progress = result.rows[0].progress
-        this.updated_at = result.rows[0].updated_at
-      }
-
-      return this
-    } catch (error) {
-      throw error
-    }
+    if (error) throw error
+    this.id_estado = row.id_estado
+    return this
   }
 
-  // Actualizar estado
-  async updateStatus(newStatus) {
-    try {
-      const query = `
-        UPDATE user_plans 
-        SET status = $1, updated_at = NOW()
-        WHERE id = $2
-        RETURNING *
-      `
-
-      const result = await dbConnection.query(query, [newStatus, this.id])
-
-      if (result.rows.length > 0) {
-        this.status = newStatus
-        this.updated_at = result.rows[0].updated_at
-      }
-
-      return this
-    } catch (error) {
-      throw error
-    }
-  }
-
-  // Obtener plan completo con detalles
   async getFullPlan() {
-    try {
-      const query = `
-        SELECT up.*, ep.name as plan_name, ep.description as plan_description,
-               ep.goal, ep.difficulty, ep.duration, ep.workouts_per_week
-        FROM user_plans up
-        JOIN exercise_plans ep ON up.plan_id = ep.id
-        WHERE up.id = $1
-      `
+    // estado + plan (via relaciones)
+    const { data: row, error } = await supabaseAdmin
+      .from("suscripciones")
+      .select(`
+        *,
+        plan:plan_id (*),
+        estado:id_estado (*)
+      `)
+      .eq("id_suscripcion", this.id_suscripcion)
+      .single()
 
-      const result = await dbConnection.query(query, [this.id])
+    if (error) throw error
+    return row
+  }
 
-      if (result.rows.length === 0) {
-        return null
-      }
-
-      return result.rows[0]
-    } catch (error) {
-      throw error
+  async getEjerciciosPorDia(diaSemana) {
+    // asegurarnos de tener el plan_id (si no, recargar suscripción)
+    let planId = this.plan_id
+    if (!planId) {
+      const { data: s, error } = await supabaseAdmin
+        .from("suscripciones")
+        .select("plan_id")
+        .eq("id_suscripcion", this.id_suscripcion)
+        .single()
+      if (error) throw error
+      planId = s?.plan_id
     }
+
+    // detalles del día
+    const { data: detalles, error: e1 } = await supabaseAdmin
+      .from("planes_detalles")
+      .select("*")
+      .eq("plan_id", planId)
+      .eq("dia_semana", diaSemana)
+      .order("orden", { ascending: true })
+
+    if (e1) throw e1
+    if (!detalles || detalles.length === 0) return []
+
+    // ejercicios del bloque
+    const ids = [...new Set(detalles.map((d) => d.ejercicio_id))]
+    const { data: exRows, error: e2 } = await supabaseAdmin
+      .from("ejercicios")
+      .select("*")
+      .in("id_ejercicio", ids)
+
+    if (e2) throw e2
+    const exById = Object.fromEntries((exRows || []).map((e) => [e.id_ejercicio, e]))
+
+    return detalles.map((d) => ({
+      ...d,
+      ejercicio_nombre: exById[d.ejercicio_id]?.nombre || null,
+      ejercicio_descripcion: exById[d.ejercicio_id]?.descripcion || null,
+      tipo_ejercicio: exById[d.ejercicio_id]?.tipo_ejercicio || null,
+    }))
   }
 }
 

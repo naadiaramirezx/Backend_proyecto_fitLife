@@ -4,7 +4,6 @@ const router = express.Router()
 
 // Rutas para alimentos
 router.get("/foods/search", nutritionController.searchFoods)
-router.get("/foods/barcode/:barcode", nutritionController.getFoodByBarcode)
 
 // Rutas para planes de comidas
 router.post("/meal-plans", nutritionController.createPersonalizedMealPlan)

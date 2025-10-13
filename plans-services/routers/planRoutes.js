@@ -1,18 +1,24 @@
+// routes/planRoutes.js
 const express = require("express")
-const planController = require("../controllers/planController")
-
 const router = express.Router()
+const planController = require("../controllers/planControllers")
 
-// Rutas para usuarios
+// RF04: Crear plan personalizado
 router.post("/personalized", planController.createPersonalizedPlan)
-router.get("/user/:userId", planController.getUserPlans)
-router.post("/workout/start", planController.startWorkout)
-router.put("/workout/complete", planController.completeWorkout)
-router.get("/", planController.getAllPlans)
 
-// Rutas para administradores/entrenadores
+// RF05: Consultar rutinas del usuario
+router.get("/user/:perfil_id", planController.getUserPlans)
+
+// Ejercicios del día (por suscripción)
+router.get("/today/:suscripcion_id", planController.getTodayWorkout)
+
+// RF07: CRUD de planes (admin)
 router.post("/", planController.createPlan)
 router.put("/:planId", planController.updatePlan)
 router.delete("/:planId", planController.deletePlan)
+
+// Listado de planes + ejercicios
+router.get("/", planController.getAllPlans)
+router.get("/exercises", planController.getAllExercises)
 
 module.exports = router

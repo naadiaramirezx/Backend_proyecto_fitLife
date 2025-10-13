@@ -281,6 +281,166 @@ class UserController {
       })
     }
   }
+
+  async requestPasswordReset(req, res) {
+    try {
+      const { email } = req.body
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: "El email es requerido",
+        })
+      }
+
+      // Verificar si el usuario existe
+      const user = await User.findByEmail(email)
+      if (!user) {
+        // Por seguridad, no revelamos si el email existe o no
+        return res.status(200).json({
+          success: true,
+          message: "Si el email existe, se ha enviado un enlace de recuperación",
+        })
+      }
+
+      const { error } = await supabaseAdmin.auth.resetPasswordForEmail(email, {
+        redirectTo: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password`,
+      })
+
+      if (error) {
+        console.error("Error solicitando recuperación:", error)
+        return res.status(400).json({
+          success: false,
+          message: "Error al enviar email de recuperación",
+        })
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "Si el email existe, se ha enviado un enlace de recuperación",
+      })
+    } catch (error) {
+      console.error("Error en recuperación de contraseña:", error)
+      res.status(500).json({
+        success: false,
+        message: "Error interno del servidor",
+      })
+    }
+  }
+
+  async resetPassword(req, res) {
+    try {
+      const { token, newPassword } = req.body
+
+      if (!token || !newPassword) {
+        return res.status(400).json({
+          success: false,
+          message: "Token y nueva contraseña son requeridos",
+        })
+      }
+
+      if (newPassword.length < 8) {
+        return res.status(400).json({
+          success: false,
+          message: "La nueva contraseña debe tener al menos 8 caracteres",
+        })
+      }
+
+      // Verificar el token
+      const { data: { user }, error: tokenError } = await supabaseAdmin.auth.getUser(token)
+      
+      if (tokenError || !user) {
+        return res.status(401).json({
+          success: false,
+          message: "Token inválido o expirado",
+        })
+      }
+
+      // Actualizar la contraseña
+      const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+        user.id,
+        { password: newPassword }
+      )
+
+      if (updateError) {
+        console.error("Error actualizando contraseña:", updateError)
+        return res.status(400).json({
+          success: false,
+          message: "Error al actualizar la contraseña",
+        })
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "Contraseña actualizada exitosamente",
+      })
+    } catch (error) {
+      console.error("Error en reset de contraseña:", error)
+      res.status(500).json({
+        success: false,
+        message: "Error interno del servidor",
+      })
+    }
+  }
+
+  async changePassword(req, res) {
+    try {
+      const { currentPassword, newPassword } = req.body
+      const userId = req.user.userId
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({
+          success: false,
+          message: "La contraseña actual y nueva son requeridas",
+        })
+      }
+
+      if (newPassword.length < 8) {
+        return res.status(400).json({
+          success: false,
+          message: "La nueva contraseña debe tener al menos 8 caracteres",
+        })
+      }
+
+      // Verificar contraseña actual
+      const { error: signInError } = await supabaseAdmin.auth.signInWithPassword({
+        email: req.user.email,
+        password: currentPassword,
+      })
+
+      if (signInError) {
+        return res.status(401).json({
+          success: false,
+          message: "La contraseña actual es incorrecta",
+        })
+      }
+
+      // Actualizar contraseña
+      const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+        userId,
+        { password: newPassword }
+      )
+
+      if (updateError) {
+        console.error("Error actualizando contraseña:", updateError)
+        return res.status(400).json({
+          success: false,
+          message: "Error al actualizar la contraseña",
+        })
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "Contraseña actualizada exitosamente",
+      })
+    } catch (error) {
+      console.error("Error cambiando contraseña:", error)
+      res.status(500).json({
+        success: false,
+        message: "Error interno del servidor",
+      })
+    }
+  }
 }
 
 module.exports = new UserController()
